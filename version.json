@@ -1,1 +1,1 @@
-{"version":"0.4.4","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.4/DSH-Desktop-0.4.4.dmg","sha256":"31ce66933084a5d09fee40d22d0329362df3ef93bf1b701dd70dbdd461afb0cc","note":"内置视觉识别插件：自定义 OpenAI 兼容端点（小米 MiMo/智谱/通义等），安装与升级自动部署；识图观察内联消息，超长会话不丢失；只分析新发图片"}
+{"version":"0.4.5","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.5/DSH-Desktop-0.4.5.dmg","sha256":"3c78a548d51dff6de3a4bf9412fe25f13b598aefd6500accfd981565a11a3422","note":"修复：双击 App 无法自动安装的问题。从 DMG/下载/桌面位置双击即自动安装到应用程序文件夹并切换到新版本（替换/保留两者/取消），清除隔离属性免拦截；已安装副本运行不受影响"}
