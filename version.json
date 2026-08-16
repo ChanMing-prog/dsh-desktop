@@ -1,1 +1,1 @@
-{"version":"0.4.7","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.7/DSH-Desktop-0.4.7.dmg","sha256":"78674b152e184e2f662790d092d408896f291acf31aa367cd699b8813dd19b8d","note":"安装体验优化：从安装包双击 App 时先弹安装对话框（替换/保留两者/取消），装完自动切换并退出，不再先打开完整 DSH 页面"}
+{"version":"0.4.8","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.8/DSH-Desktop-0.4.8.dmg","sha256":"3bf2055167d02a435e8790ccbfb2bd9f7d82371c7f1ce007813579c0ad0b9c1c","note":"回归纯净架构：移除视觉插件（dsh-vision/vision-router），弃用 node JIT 规避，恢复原始 DeepSeek 对话形态；保留双击安装器行为、安装硬化、DMG 精简"}
