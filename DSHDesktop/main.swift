@@ -302,7 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         boot()
 
         // 从磁盘镜像（DMG）运行时，自动复制到 ~/Applications（首次安装与升级都适用）
-        selfInstallFromVolumeIfNeeded()
+        // 延迟 3 秒，避免选择弹窗阻塞启动流程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.selfInstallFromVolumeIfNeeded()
+        }
 
         // 启动 5 秒后后台检查更新（DSH_DESKTOP_UPDATE_CHECK=0 可关闭）
         if env("DSH_DESKTOP_UPDATE_CHECK") != "0" {
@@ -327,15 +330,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appName = (bundlePath as NSString).lastPathComponent
         guard let destDir = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first else { return }
         let dest = destDir.appendingPathComponent(appName)
-        DispatchQueue.global(qos: .utility).async {
-            let fm = FileManager.default
-            do {
-                if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-                try fm.copyItem(atPath: bundlePath, toPath: dest.path)
-                NSLog("dsh-desktop: copied self from DMG to %@", dest.path)
-            } catch {
-                NSLog("dsh-desktop: self-copy from DMG failed: %@", error.localizedDescription)
+        let fm = FileManager.default
+
+        func copySelf(to target: URL) {
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+                    try fm.copyItem(atPath: bundlePath, toPath: target.path)
+                    NSLog("dsh-desktop: copied self from DMG to %@", target.path)
+                } catch {
+                    NSLog("dsh-desktop: self-copy from DMG failed: %@", error.localizedDescription)
+                }
             }
+        }
+
+        // 全新安装：静默复制，无需询问
+        if !fm.fileExists(atPath: dest.path) {
+            copySelf(to: dest)
+            return
+        }
+
+        // 已存在同名 App → 替换 / 保留两者 / 取消
+        let existingVersion = Bundle(path: dest.path)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        let incoming = currentAppVersion()
+
+        let decision: String
+        if let override = env("DSH_DESKTOP_SELFCOPY_CHOICE") {
+            decision = override   // 测试钩子: 1=替换 2=保留两者 3=取消
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "「DSH Desktop」已存在"
+            alert.informativeText = "已安装版本：\(existingVersion)\n安装包版本：\(incoming)\n\n要替换现有版本，还是保留两者？"
+            alert.addButton(withTitle: "替换")
+            alert.addButton(withTitle: "保留两者")
+            alert.addButton(withTitle: "取消")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: decision = "1"
+            case .alertSecondButtonReturn: decision = "2"
+            default: decision = "3"
+            }
+        }
+
+        switch decision {
+        case "2":
+            // 保留两者：按 Finder 惯例命名为 "DSH Desktop 2.app"
+            let stem = (appName as NSString).deletingPathExtension
+            var i = 2
+            while fm.fileExists(atPath: destDir.appendingPathComponent("\(stem) \(i).app").path) { i += 1 }
+            let keep = destDir.appendingPathComponent("\(stem) \(i).app")
+            NSLog("dsh-desktop: keep both, install to %@", keep.path)
+            copySelf(to: keep)
+        case "3":
+            NSLog("dsh-desktop: self-copy cancelled by user")
+        default:
+            copySelf(to: dest)
         }
     }
 

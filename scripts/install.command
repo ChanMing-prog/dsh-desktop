@@ -105,38 +105,55 @@ else
 fi
 
 # ---------- 4. 安装 App ----------
+SKIP_LAUNCH=0
 if [ "$GUI_MODE" = "1" ]; then
-  SRC_APP="${DSH_APP_BUNDLE:-}"
-  case "$SRC_APP" in
-    /Volumes/*)
-      mkdir -p "$HOME/Applications"
-      rm -rf "$HOME/Applications/$APP_NAME"
-      cp -R "$SRC_APP" "$HOME/Applications/$APP_NAME"
-      xattr -dr com.apple.quarantine "$HOME/Applications/$APP_NAME" 2>/dev/null
-      log "App 已从磁盘镜像复制到 $HOME/Applications（以后可从启动台打开）"
-      ;;
-    *)
-      log "App 已在本地磁盘，跳过复制"
-      ;;
-  esac
+  # App 内触发：App 位置由 App 自行处理（自动复制到应用程序文件夹，含替换/保留两者提示）
+  log "App 安装位置由 DSH Desktop 自动处理"
 else
   if [ ! -d "$SCRIPT_DIR/$APP_NAME" ]; then
     fail "未找到 ${APP_NAME}（请保持安装脚本与 App 在同一个文件夹内运行）"
   fi
   DEST="$HOME/Applications"
   mkdir -p "$DEST"
-  rm -rf "$DEST/$APP_NAME"
-  cp -R "$SCRIPT_DIR/$APP_NAME" "$DEST/"
-  xattr -dr com.apple.quarantine "$DEST/$APP_NAME" 2>/dev/null
-  log "App 已安装到 $DEST/$APP_NAME"
+  if [ -d "$DEST/$APP_NAME" ]; then
+    EXISTING_VER=$(defaults read "$DEST/$APP_NAME/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "未知")
+    NEW_VER=$(defaults read "$SCRIPT_DIR/$APP_NAME/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "未知")
+    echo "「DSH Desktop」已存在：已安装 ${EXISTING_VER} / 安装包 ${NEW_VER}"
+    echo "  [1] 替换   [2] 保留两者   [3] 取消"
+    printf "请选择 [1/2/3]："
+    read -r CHOICE
+    case "$CHOICE" in
+      2)
+        I=2
+        while [ -d "$DEST/DSH Desktop $I.app" ]; do I=$((I + 1)); done
+        KEEP="$DEST/DSH Desktop $I.app"
+        cp -R "$SCRIPT_DIR/$APP_NAME" "$KEEP/"
+        xattr -dr com.apple.quarantine "$KEEP" 2>/dev/null
+        log "已保留两者：$KEEP（原版本未动，本次不自动启动）"
+        SKIP_LAUNCH=1
+        ;;
+      3)
+        log "已取消安装"
+        exit 0
+        ;;
+    esac
+  fi
+  if [ "$SKIP_LAUNCH" = "0" ]; then
+    rm -rf "$DEST/$APP_NAME"
+    cp -R "$SCRIPT_DIR/$APP_NAME" "$DEST/"
+    xattr -dr com.apple.quarantine "$DEST/$APP_NAME" 2>/dev/null
+    log "App 已安装到 $DEST/$APP_NAME"
+  fi
 fi
 
 # ---------- 5. 启动 ----------
 if [ "$GUI_MODE" = "1" ]; then
   log "安装完成（由 App 继续启动）"
-else
+elif [ "$SKIP_LAUNCH" = "0" ]; then
   log "安装完成，正在启动 DSH…"
   open "$DEST/$APP_NAME"
+else
+  log "安装完成"
 fi
 echo "[DSH 安装] 完成！"
 exit 0
