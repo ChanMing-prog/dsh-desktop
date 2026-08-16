@@ -37,6 +37,8 @@
 |---|---|
 | `DSH_NODE_PATH` | node 绝对路径（默认自动探测） |
 | `DSH_BIN_PATH` | dsh `bin.js` 绝对路径（默认按 node 前缀 + 常见全局目录探测） |
+| `DSH_NODE_ARCH` | 自起 node 的架构（如 `x86_64`，经 `/usr/bin/arch` 启动；需先装 Rosetta） |
+| `DSH_NODE_OPTIONS` | 追加给自起 node 的 Node.js 选项（如 `--jitless`） |
 | `DSH_DESKTOP_PORT` | 探测端口（默认 3080） |
 | `DSH_DESKTOP_SINGLE_INSTANCE=0` | 关闭单实例 |
 | `DSH_DESKTOP_AUTO_QUIT_SECONDS` / `DSH_DESKTOP_HIDDEN` | 自动化测试钩子 |
@@ -53,29 +55,10 @@ DSH_NOTARY_PROFILE="my-notary-profile" bash build.sh
 ```
 
 产物：`build/DSH Desktop.app`、`build/DSH-Desktop-<版本>.dmg`
-（DMG 内含 App + `安装.command` 一键安装脚本 + 安装说明；
-App 内嵌同款安装脚本，双击 App 首次运行缺少运行环境时自动静默安装）。
+（DMG 内含 App + 安装说明；App 内嵌安装脚本，双击 App 即自动安装：
+复制到应用程序文件夹 + 首次运行缺少运行环境时自动静默安装）。
 
 依赖：Xcode Command Line Tools（swiftc/sips/iconutil/codesign），macOS 13+。
-
-## 视觉识别（多模态）
-
-DSH 原生插件体系里已有休眠的多模态适配器（`@deepseek-ai/dsh-llm-pi-ai`），
-本仓库随安装包分发一个小插件 `packages/dsh-vision-router` 把它接通：
-
-- **安装时自动激活**：安装器把插件装进 profile
-  （`dsh plugin --profile web add file:<插件目录>`，bundles 自动归位），
-  并在 `~/.dsh/settings.yaml` 写入 `llm-pi-ai.providers.vision` 示例配置
-  （默认智谱 GLM-4V 网关，可在「设置 → 模型」改成任意 OpenAI 兼容网关）
-- **自动路由**：监听 `agent/pre-step` / `agent/request` 瀑布事件——
-  会话历史含图且当前模型不支持 image 输入时，自动切到 vision 路由上
-  第一个多模态模型；纯文字对话不受影响
-- **升级自愈**：App 每次启动检查 profile 是否有该插件，缺失自动补装
-  （0.5.0 之前装的旧版升级后无需重装安装包）
-
-视觉网关与 API Key 在 DSH 的「设置 → 模型」页面配置（凭据写入
-`~/.dsh/.credentials.yaml` 的 `VISION_API_KEY`，也可用
-`packages/dsh-vision-router/configure-vision.mjs` 脚本配置）。
 
 ## 分发（给别人装）
 
@@ -84,7 +67,6 @@ DMG 发给对方 → **双击 `DSH Desktop` 即可**：
 - 首次打开自动安装运行环境（node + dsh，约 300MB），装完自动进入；
   被 Gatekeeper 拦时右键 → 打开（一次性）
 - API Key 可在安装时跳过，装好后在 App「设置 → 模型」里补填
-- 也可双击 `安装.command` 走终端手动安装（交互式、可输 Key）
 
 未公证的 DMG 首次打开需右键→打开；**签名+公证后零提示**。
 

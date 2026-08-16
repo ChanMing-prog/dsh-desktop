@@ -87,62 +87,81 @@ if [ -x "$LOCAL_ROOT/nodejs/bin/pnpm" ] && [ ! -e "$LOCAL_BIN/pnpm" ]; then
   ln -sf "$LOCAL_ROOT/nodejs/bin/pnpm" "$LOCAL_BIN/pnpm"
 fi
 
-# ---------- 2.5 视觉识别插件（dsh-vision：自定义端点识图）----------
-install_vision_plugin() {
-  PLUGIN_DIR="${1:-}"
-  [ -n "$PLUGIN_DIR" ] && [ -f "$PLUGIN_DIR/package.json" ] || return 0
-  command -v dsh >/dev/null 2>&1 || { log "未找到 dsh CLI，跳过视觉插件"; return 0; }
-  if ! command -v pnpm >/dev/null 2>&1; then
-    log "安装 pnpm（插件管理所需）…"
-    npm install -g pnpm --no-fund --no-audit >/dev/null 2>&1 || { log "pnpm 安装失败，跳过视觉插件"; return 0; }
-    export PATH="$LOCAL_BIN:$PATH"
-  fi
-  log "安装视觉识别插件…"
-  if dsh plugin --profile web add "file:$PLUGIN_DIR" >/dev/null 2>&1; then
-    log "视觉识别插件已安装（设置 → 插件 → 视觉识别 可配置自定义端点）"
-  else
-    log "视觉插件安装失败（不影响主功能，可稍后重装）"
-  fi
-}
+# ---------- 2.5 跨架构原生模块（Apple Silicon 上为 Rosetta x86_64 补 x64）----------
+# macOS 26 在 Apple Silicon 上存在 XNU JIT(mprotect) 内核 bug，用 x86_64(Rosetta) 运行
+# 可规避。但 dsh 的 sharp/koffi/node-addon-require-builtin 三个原生模块，npm 只会装当前
+# 架构（arm64），这里手动补 x64 版本，让两套架构并存。npm 更新 dsh 后会把 x64 清掉，
+# 所以本函数做成幂等，可在更新后重跑（DSH_INSTALL_CROSS_ARCH_ONLY=1 可单独触发）。
+install_cross_arch_native() {
+  [ "$(uname -m)" = "arm64" ] || return 0
 
-# 写入自定义视觉端点配置（llm-deepseek 段 + 凭据），已配置过则跳过
-write_vision_config() {
-  local BASE_URL="$1" MODEL="$2" KEY="${3:-}"
-  local SETTINGS="$HOME/.dsh/settings.yaml"
-  mkdir -p "$HOME/.dsh"
-  if grep -q "visionBackend:" "$SETTINGS" 2>/dev/null; then
-    log "视觉识别已配置过，跳过配置写入"
-  else
-    if grep -q "^llm-deepseek:" "$SETTINGS" 2>/dev/null; then
-      printf '  visionBackend: custom\n  visionBackendBaseURL: %s\n  visionBackendModel: %s\n' \
-        "$BASE_URL" "$MODEL" >> "$SETTINGS"
+  local NPM_ROOT
+  NPM_ROOT="$(npm root -g 2>/dev/null)"
+  [ -n "$NPM_ROOT" ] || NPM_ROOT="$LOCAL_ROOT/lib/node_modules"
+
+  local NM="$NPM_ROOT/@deepseek-ai/dsh/node_modules"
+  [ -d "$NM" ] || return 0
+
+  local OTHER_ARCH="x64"
+  local SPECS
+  SPECS="$(node - "$NM" "$OTHER_ARCH" <<'NODE'
+const fs = require("fs"), path = require("path");
+const nm = process.argv[2], other = process.argv[3];
+const map = {
+  "sharp": ["@img/sharp-darwin-" + other, "@img/sharp-libvips-darwin-" + other],
+  "koffi": ["@koromix/koffi-darwin-" + other],
+  "node-addon-require-builtin": ["node-addon-require-builtin-darwin-" + other],
+};
+const out = [];
+for (const [main, pkgs] of Object.entries(map)) {
+  let p;
+  try { p = JSON.parse(fs.readFileSync(path.join(nm, main, "package.json"), "utf8")); } catch { continue; }
+  for (const pkg of pkgs) {
+    const v = p.optionalDependencies && p.optionalDependencies[pkg];
+    if (v) out.push(pkg + "@" + v);
+  }
+}
+console.log(out.join(" "));
+NODE
+)"
+  [ -n "$SPECS" ] || return 0
+
+  local spec pkg ver name url dest tmpdir
+  for spec in $SPECS; do
+    pkg="${spec%@*}"; ver="${spec##*@}"
+    name="${pkg#*/}"
+    url="https://registry.npmjs.org/${pkg}/-/${name}-${ver}.tgz"
+    if [[ "$pkg" == @* ]]; then
+      dest="$NM/${pkg%%/*}/${pkg##*/}"
     else
-      printf '\nllm-deepseek:\n  visionBackend: custom\n  visionBackendBaseURL: %s\n  visionBackendModel: %s\n' \
-        "$BASE_URL" "$MODEL" >> "$SETTINGS"
+      dest="$NM/$pkg"
     fi
-    if [ -n "$KEY" ]; then
-      if [ -f "$HOME/.dsh/.credentials.yaml" ] && grep -q "DSH_VISION_CUSTOM_API_KEY" "$HOME/.dsh/.credentials.yaml" 2>/dev/null; then
-        : # 已有 Key，保留
+    [ -f "$dest/package.json" ] && continue
+    log "补装跨架构原生模块：${pkg}@${ver}"
+    tmpdir="$(mktemp -d)"
+    if curl -fsSL --connect-timeout 20 -o "$tmpdir/pkg.tgz" "$url"; then
+      mkdir -p "$dest"
+      if tar -xzf "$tmpdir/pkg.tgz" -C "$dest" --strip-components=1; then
+        log "  完成：${pkg}"
       else
-        printf 'DSH_VISION_CUSTOM_API_KEY: %s\n' "$KEY" >> "$HOME/.dsh/.credentials.yaml"
-        chmod 600 "$HOME/.dsh/.credentials.yaml"
+        log "  ${pkg} 解压失败（x86_64 兼容模式下部分原生能力不可用，重跑安装脚本可修复）"
       fi
+    else
+      log "  ${pkg} 下载失败（x86_64 兼容模式下部分原生能力不可用，重跑安装脚本可修复）"
     fi
-    log "视觉识别已配置：$BASE_URL（$MODEL）"
-  fi
+    rm -rf "$tmpdir"
+  done
 }
 
-if [ "${DSH_INSTALL_VISION_ONLY:-0}" = "1" ]; then
-  # 仅补装视觉能力（App 启动自检：老版本升级后自动补装）
-  PLUGIN_DIR_GLOBAL=""
-  if [ -n "${DSH_APP_BUNDLE:-}" ] && [ -d "${DSH_APP_BUNDLE}/Contents/Resources/dsh-vision" ]; then
-    PLUGIN_DIR_GLOBAL="${DSH_APP_BUNDLE}/Contents/Resources/dsh-vision"
-  elif [ -d "$SCRIPT_DIR/$APP_NAME/Contents/Resources/dsh-vision" ]; then
-    PLUGIN_DIR_GLOBAL="$SCRIPT_DIR/$APP_NAME/Contents/Resources/dsh-vision"
-  fi
-  install_vision_plugin "$PLUGIN_DIR_GLOBAL"
+
+if [ "${DSH_INSTALL_CROSS_ARCH_ONLY:-0}" = "1" ]; then
+  # 仅补装跨架构原生模块（App 更新 dsh 后重新补齐 x64 二进制）
+  install_cross_arch_native
   exit 0
 fi
+
+# 常规安装路径：dsh 装完后补齐 x64 原生模块（幂等）
+install_cross_arch_native
 
 # ---------- 3. API 凭据（可选，可稍后在 App「设置 → 模型」里补填）----------
 CRED_FILE="$HOME/.dsh/.credentials.yaml"
@@ -164,37 +183,6 @@ else
   fi
 fi
 
-# ---------- 3.5 视觉能力 ----------
-# 定位 App 内嵌的视觉插件目录
-if [ "$GUI_MODE" = "1" ] && [ -n "${DSH_APP_BUNDLE:-}" ]; then
-  PLUGIN_DIR_GLOBAL="${DSH_APP_BUNDLE}/Contents/Resources/dsh-vision"
-elif [ -d "$SCRIPT_DIR/$APP_NAME/Contents/Resources/dsh-vision" ]; then
-  PLUGIN_DIR_GLOBAL="$SCRIPT_DIR/$APP_NAME/Contents/Resources/dsh-vision"
-else
-  PLUGIN_DIR_GLOBAL=""
-fi
-install_vision_plugin "$PLUGIN_DIR_GLOBAL"
-
-# 交互模式：可选引导配置自定义视觉端点（OpenAI 兼容）
-if [ "$GUI_MODE" = "0" ] && [ -t 0 ] && [ -f "$PLUGIN_DIR_GLOBAL/package.json" ]; then
-  if ! grep -q "visionBackend:" "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-    printf "配置视觉识别模型？（直接回车跳过，之后可在 DSH 设置 → 插件 → 视觉识别 中配置）[y/N]："
-    read -r VISION_YN
-    if [ "$VISION_YN" = "y" ] || [ "$VISION_YN" = "Y" ]; then
-      printf "接口地址 baseURL（OpenAI 兼容，如 https://token-plan-cn.xiaomimimo.com/v1）："
-      read -r VISION_BASE_URL
-      printf "模型 ID（如 mimo-v2.5 / glm-4v-flash / qwen-vl-plus）："
-      read -r VISION_MODEL
-      printf "视觉 API Key（可回车跳过，之后在设置中补）："
-      read -r VISION_KEY
-      if [ -n "$VISION_BASE_URL" ] && [ -n "$VISION_MODEL" ]; then
-        write_vision_config "$VISION_BASE_URL" "$VISION_MODEL" "$VISION_KEY"
-      else
-        log "未填写完整，跳过视觉配置（之后可在设置中配置）"
-      fi
-    fi
-  fi
-fi
 
 # ---------- 4. 安装 App ----------
 SKIP_LAUNCH=0

@@ -11,6 +11,8 @@
 // 环境变量：
 //   DSH_NODE_PATH         node 可执行文件绝对路径（默认自动探测）
 //   DSH_BIN_PATH          dsh bin.js 绝对路径（默认 ~/.local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js）
+//   DSH_NODE_ARCH        自起 node 的架构（如 x86_64，经 /usr/bin/arch 启动；需已安装 Rosetta）
+//   DSH_NODE_OPTIONS     追加给自起 node 的 Node.js 选项（如 --jitless）
 //   DSH_DESKTOP_PORT      探测端口（默认 3080；测试用）
 //   DSH_DESKTOP_SINGLE_INSTANCE  设为 0 关闭单实例
 //   DSH_DESKTOP_AUTO_QUIT_SECONDS  启动 N 秒后自动退出（自动化测试钩子）
@@ -248,8 +250,15 @@ final class DshServer {
     private var onFail: ((String) -> Void)?
 
     init(nodePath: String, dshEntry: String) {
-        process.executableURL = URL(fileURLWithPath: nodePath)
-        process.arguments = [dshEntry, "--profile", "web", "--port", "0"]
+        // 可选：用指定架构启动 node（如 x86_64），绕开 macOS 26 ARM64 的 JIT 内核 bug
+        let nodeArch = env("DSH_NODE_ARCH")?.trimmingCharacters(in: .whitespaces)
+        if let nodeArch = nodeArch, !nodeArch.isEmpty {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
+            process.arguments = ["-\(nodeArch)", nodePath, dshEntry, "--profile", "web", "--port", "0"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: nodePath)
+            process.arguments = [dshEntry, "--profile", "web", "--port", "0"]
+        }
         process.standardOutput = outPipe
         process.standardError = errPipe
 
@@ -258,6 +267,11 @@ final class DshServer {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extraPath = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin"
         processEnv["PATH"] = "\(extraPath):\(processEnv["PATH"] ?? "")"
+        // 可选：追加 Node.js 运行选项（如 --jitless），默认不注入
+        if let nodeOptions = env("DSH_NODE_OPTIONS")?.trimmingCharacters(in: .whitespaces), !nodeOptions.isEmpty {
+            let existing = processEnv["NODE_OPTIONS"]?.trimmingCharacters(in: .whitespaces) ?? ""
+            processEnv["NODE_OPTIONS"] = existing.isEmpty ? nodeOptions : "\(existing) \(nodeOptions)"
+        }
         process.environment = processEnv
 
         // 工作目录放到 home，避免相对路径落到 "/"
@@ -349,10 +363,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.checkDshUpdate(manual: false)
             }
         }
-        // 8 秒后自检视觉插件：缺失则自动补装（老版本升级无缝获得视觉能力）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            self?.ensureVisionPlugin()
-        }
 
         // 自动化测试钩子：N 秒后走完整退出流程
         if let secs = env("DSH_DESKTOP_AUTO_QUIT_SECONDS"), let delay = Double(secs) {
@@ -427,12 +437,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
             try fm.copyItem(atPath: bundlePath, toPath: target.path)
-            // 清除隔离属性 / provenance，避免新副本被 Gatekeeper 拦截
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-            proc.arguments = ["-cr", target.path]
-            try? proc.run()
-            proc.waitUntilExit()
+            // 定向清除隔离属性与 provenance（注意：不能用 xattr -cr 清空全部属性，
+            // 会破坏代码签名的密封资源校验，导致「已不能再打开」）
+            let xattrProc = Process()
+            xattrProc.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            xattrProc.arguments = ["-dr", "com.apple.quarantine", target.path]
+            try? xattrProc.run()
+            xattrProc.waitUntilExit()
+            let provProc = Process()
+            provProc.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            provProc.arguments = ["-dr", "com.apple.provenance", target.path]
+            try? provProc.run()
+            provProc.waitUntilExit()
+            // 刷新 LaunchServices 注册，避免旧签名缓存导致首次打开校验失败
+            let lsreg = Process()
+            lsreg.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+            lsreg.arguments = ["-f", target.path]
+            try? lsreg.run()
+            lsreg.waitUntilExit()
             NSLog("dsh-desktop: installed to %@", target.path)
         } catch {
             NSLog("dsh-desktop: install failed: %@", error.localizedDescription)
@@ -446,51 +468,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         }
         return true
-    }
-
-    // MARK: 视觉插件自愈
-
-    func ensureVisionPlugin() {
-        // 运行时未就绪时跳过（首次安装由引导安装器处理）
-        guard findNodeExecutable() != nil,
-              findDshEntry(nodePath: findNodeExecutable()) != nil else { return }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let manifestURL = URL(fileURLWithPath: "\(home)/.dsh/profiles/web/package.json")
-        guard let data = try? Data(contentsOf: manifestURL),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let dshSection = obj["dsh"] as? [String: Any],
-              let profileSection = dshSection["profile"] as? [String: Any],
-              let bundles = profileSection["bundles"] as? [String] else { return }
-        if bundles.contains("@chanming-prog/dsh-vision") { return }
-
-        guard let scriptURL = Bundle.main.url(forResource: "install", withExtension: "sh") else { return }
-        NSLog("dsh-desktop: vision plugin missing, self-healing install")
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [scriptURL.path]
-        var taskEnv = ProcessInfo.processInfo.environment
-        taskEnv["DSH_INSTALL_GUI"] = "1"
-        taskEnv["DSH_INSTALL_VISION_ONLY"] = "1"
-        taskEnv["DSH_APP_BUNDLE"] = Bundle.main.bundlePath
-        taskEnv["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin:\(home)/.local/nodejs/bin"
-        task.environment = taskEnv
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                NSLog("[dsh-vision] %@", text)
-            }
-        }
-        task.terminationHandler = { proc in
-            NSLog("dsh-desktop: vision plugin ensure finished (exit %d)", proc.terminationStatus)
-        }
-        do {
-            try task.run()
-        } catch {
-            NSLog("dsh-desktop: vision plugin ensure failed to start: %@", error.localizedDescription)
-        }
     }
 
 
@@ -710,13 +687,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self = self else { return }
                 if proc.terminationStatus == 0 {
                     NSLog("dsh-desktop: dsh upgraded to %@", latest)
-                    // 自己拉起的服务立即重启生效；复用的外部服务下次启动生效
-                    if !self.serverIsExternal, self.server != nil {
-                        self.server?.stop()
-                        self.startOwnServer()
-                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)，服务已自动重启生效。")
-                    } else {
-                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)。\n下次启动 DSH 时生效。")
+                    // npm 会把跨架构原生模块清掉，先补齐 x64 再重启服务，避免 x86_64 模式起不来
+                    self.runCrossArchReinstall {
+                        if !self.serverIsExternal, self.server != nil {
+                            self.server?.stop()
+                            self.startOwnServer()
+                            self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)，服务已自动重启生效。")
+                        } else {
+                            self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)。\n下次启动 DSH 时生效。")
+                        }
                     }
                 } else {
                     lock.lock()
@@ -730,6 +709,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try task.run()
         } catch {
             showUpdateAlert(title: "升级失败", message: "无法启动 npm：\(error.localizedDescription)")
+        }
+    }
+
+    /// dsh 升级（npm install -g）会清掉 x64 原生模块，这里调用内置安装脚本重新补齐后回调。
+    func runCrossArchReinstall(completion: @escaping () -> Void) {
+        guard let scriptURL = Bundle.main.url(forResource: "install", withExtension: "sh") else {
+            completion()
+            return
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [scriptURL.path]
+        var taskEnv = ProcessInfo.processInfo.environment
+        taskEnv["DSH_INSTALL_CROSS_ARCH_ONLY"] = "1"
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        taskEnv["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin:\(home)/.local/nodejs/bin"
+        task.environment = taskEnv
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                NSLog("[dsh-x64] %@", text)
+            }
+        }
+        task.terminationHandler = { proc in
+            DispatchQueue.main.async {
+                NSLog("dsh-desktop: cross-arch native reinstall finished (exit %d)", proc.terminationStatus)
+                completion()
+            }
+        }
+        do {
+            try task.run()
+        } catch {
+            NSLog("dsh-desktop: cross-arch native reinstall failed to start: %@", error.localizedDescription)
+            completion()
         }
     }
 
