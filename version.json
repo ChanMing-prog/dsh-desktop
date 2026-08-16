@@ -1,1 +1,1 @@
-{"version":"0.4.5","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.5/DSH-Desktop-0.4.5.dmg","sha256":"3c78a548d51dff6de3a4bf9412fe25f13b598aefd6500accfd981565a11a3422","note":"修复：双击 App 无法自动安装的问题。从 DMG/下载/桌面位置双击即自动安装到应用程序文件夹并切换到新版本（替换/保留两者/取消），清除隔离属性免拦截；已安装副本运行不受影响"}
+{"version":"0.4.6","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.6/DSH-Desktop-0.4.6.dmg","sha256":"a0da5936e22de542ee7b59dcad56369babac0f00dfddd88f03f689cfaf4f5bef","note":"DMG 精简：安装包只含 App 与安装说明（安装逻辑已内置 App，双击即自动安装到应用程序并补装视觉插件）"}
