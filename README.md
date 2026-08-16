@@ -4,6 +4,9 @@
 
 纯 Swift + WKWebView 实现，无 Electron、无第三方依赖，产物约 530KB（universal：Apple Silicon + Intel）。
 
+仓库：https://github.com/ChanMing-prog/dsh-desktop
+下载：https://github.com/ChanMing-prog/dsh-desktop/releases
+
 ## 工作原理
 
 ```
