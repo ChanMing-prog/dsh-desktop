@@ -329,15 +329,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // 安装源自安装：在打开完整界面之前完成（安装器行为）。
+        // 从 DMG/下载/桌面双击时，先弹安装对话框 → 安装 → 自动打开新副本并退出，
+        // 不启动完整 DSH 页面。
+        if performInstallIfNeeded() { return }
+
         buildMenu()
         createWindow()
         boot()
-
-        // 从磁盘镜像（DMG）运行时，自动复制到 ~/Applications（首次安装与升级都适用）
-        // 延迟 3 秒，避免选择弹窗阻塞启动流程
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.selfInstallFromVolumeIfNeeded()
-        }
 
         // 启动 5 秒后后台检查更新（DSH_DESKTOP_UPDATE_CHECK=0 可关闭）
         if env("DSH_DESKTOP_UPDATE_CHECK") != "0" {
@@ -360,6 +360,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    // MARK: 安装源自安装（打开完整界面之前执行）
+
+    /// 从安装源（DMG 卷 / 下载 / 桌面）运行时，先完成安装再退出。
+    /// 返回 true 表示安装流程已接管（正在安装或已安装完成，无需继续启动 UI）。
+    /// 返回 false 表示无需安装（已安装副本 / 非安装源 / 用户取消 / 安装失败），调用方继续正常启动。
+    func performInstallIfNeeded() -> Bool {
+        // 开发/测试豁免：DSH_DESKTOP_NO_SELFCOPY=1 时不做任何自安装
+        if env("DSH_DESKTOP_NO_SELFCOPY") == "1" { return false }
+
+        let bundlePath = Bundle.main.bundlePath
+        let appName = (bundlePath as NSString).lastPathComponent
+        guard let destDir = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first else { return false }
+        let dest = destDir.appendingPathComponent(appName)
+        let fm = FileManager.default
+
+        // 已在应用程序文件夹运行 → 无需安装
+        if bundlePath == dest.path { return false }
+
+        // 仅当从可识别的「安装源」位置运行才安装：
+        //   磁盘镜像 /Volumes/、下载与桌面（用户把 App 拖出 DMG 后的常见位置）
+        let isInstallSource = bundlePath.hasPrefix("/Volumes/")
+            || bundlePath.contains("/Downloads/")
+            || bundlePath.contains("/Desktop/")
+        guard isInstallSource else { return false }
+        NSLog("dsh-desktop: install-source launch (%@), running installer before UI", bundlePath)
+
+        // 已存在同名 App → 替换 / 保留两者 / 取消
+        var target = dest
+        if fm.fileExists(atPath: dest.path) {
+            let existingVersion = Bundle(path: dest.path)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+            let incoming = currentAppVersion()
+            let decision: String
+            if let override = env("DSH_DESKTOP_SELFCOPY_CHOICE") {
+                decision = override   // 测试钩子: 1=替换 2=保留两者 3=取消
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "「DSH Desktop」已存在"
+                alert.informativeText = "已安装版本：\(existingVersion)\n安装包版本：\(incoming)\n\n要替换现有版本，还是保留两者？"
+                alert.addButton(withTitle: "替换")
+                alert.addButton(withTitle: "保留两者")
+                alert.addButton(withTitle: "取消")
+                switch alert.runModal() {
+                case .alertFirstButtonReturn: decision = "1"
+                case .alertSecondButtonReturn: decision = "2"
+                default: decision = "3"
+                }
+            }
+            switch decision {
+            case "2":
+                let stem = (appName as NSString).deletingPathExtension
+                var i = 2
+                while fm.fileExists(atPath: destDir.appendingPathComponent("\(stem) \(i).app").path) { i += 1 }
+                target = destDir.appendingPathComponent("\(stem) \(i).app")
+            case "3":
+                NSLog("dsh-desktop: install cancelled by user, continuing normal launch from install source")
+                return false
+            default:
+                break
+            }
+        }
+
+        // 同步安装（安装器行为：先装完，再切换，不显示任何 App 界面）
+        do {
+            if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+            try fm.copyItem(atPath: bundlePath, toPath: target.path)
+            // 清除隔离属性 / provenance，避免新副本被 Gatekeeper 拦截
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            proc.arguments = ["-cr", target.path]
+            try? proc.run()
+            proc.waitUntilExit()
+            NSLog("dsh-desktop: installed to %@", target.path)
+        } catch {
+            NSLog("dsh-desktop: install failed: %@", error.localizedDescription)
+            return false
+        }
+
+        // 打开新副本并退出当前安装器实例
+        NSLog("dsh-desktop: launching installed copy at %@", target.path)
+        NSWorkspace.shared.openApplication(at: target, configuration: NSWorkspace.OpenConfiguration())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            NSApp.terminate(nil)
+        }
+        return true
     }
 
     // MARK: 视觉插件自愈
@@ -407,70 +493,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: 从 DMG 自安装
-
-    func selfInstallFromVolumeIfNeeded() {
-        let bundlePath = Bundle.main.bundlePath
-        guard bundlePath.hasPrefix("/Volumes/") else { return }
-        let appName = (bundlePath as NSString).lastPathComponent
-        guard let destDir = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first else { return }
-        let dest = destDir.appendingPathComponent(appName)
-        let fm = FileManager.default
-
-        func copySelf(to target: URL) {
-            DispatchQueue.global(qos: .utility).async {
-                do {
-                    if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-                    try fm.copyItem(atPath: bundlePath, toPath: target.path)
-                    NSLog("dsh-desktop: copied self from DMG to %@", target.path)
-                } catch {
-                    NSLog("dsh-desktop: self-copy from DMG failed: %@", error.localizedDescription)
-                }
-            }
-        }
-
-        // 全新安装：静默复制，无需询问
-        if !fm.fileExists(atPath: dest.path) {
-            copySelf(to: dest)
-            return
-        }
-
-        // 已存在同名 App → 替换 / 保留两者 / 取消
-        let existingVersion = Bundle(path: dest.path)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
-        let incoming = currentAppVersion()
-
-        let decision: String
-        if let override = env("DSH_DESKTOP_SELFCOPY_CHOICE") {
-            decision = override   // 测试钩子: 1=替换 2=保留两者 3=取消
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "「DSH Desktop」已存在"
-            alert.informativeText = "已安装版本：\(existingVersion)\n安装包版本：\(incoming)\n\n要替换现有版本，还是保留两者？"
-            alert.addButton(withTitle: "替换")
-            alert.addButton(withTitle: "保留两者")
-            alert.addButton(withTitle: "取消")
-            switch alert.runModal() {
-            case .alertFirstButtonReturn: decision = "1"
-            case .alertSecondButtonReturn: decision = "2"
-            default: decision = "3"
-            }
-        }
-
-        switch decision {
-        case "2":
-            // 保留两者：按 Finder 惯例命名为 "DSH Desktop 2.app"
-            let stem = (appName as NSString).deletingPathExtension
-            var i = 2
-            while fm.fileExists(atPath: destDir.appendingPathComponent("\(stem) \(i).app").path) { i += 1 }
-            let keep = destDir.appendingPathComponent("\(stem) \(i).app")
-            NSLog("dsh-desktop: keep both, install to %@", keep.path)
-            copySelf(to: keep)
-        case "3":
-            NSLog("dsh-desktop: self-copy cancelled by user")
-        default:
-            copySelf(to: dest)
-        }
-    }
 
     // MARK: 版本检查
 
@@ -1015,14 +1037,22 @@ extension AppDelegate: WKDownloadDelegate {
 
 // MARK: - 入口
 
-// 单实例：已有实例则激活它并退出
+// 单实例：已有实例则激活它并退出。
+// 例外：从安装源（DMG 卷 / 下载 / 桌面）运行的实例不退出——
+// 需要保留进程完成「自动安装到应用程序文件夹」，完成后它会自动切换到新副本。
 let bundleID = Bundle.main.bundleIdentifier ?? FALLBACK_BUNDLE_ID
 if env("DSH_DESKTOP_SINGLE_INSTANCE") != "0" {
-    let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-        .filter { $0.processIdentifier != getpid() }
-    if let existing = others.first {
-        existing.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        exit(0)
+    let bundlePath = Bundle.main.bundlePath
+    let isInstallSource = bundlePath.hasPrefix("/Volumes/")
+        || bundlePath.contains("/Downloads/")
+        || bundlePath.contains("/Desktop/")
+    if !isInstallSource {
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != getpid() }
+        if let existing = others.first {
+            existing.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            exit(0)
+        }
     }
 }
 
