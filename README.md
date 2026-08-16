@@ -81,13 +81,16 @@ App 启动后 5 秒后台请求 `DSHUpdateURL`（Info.plist，构建时注入）
 {"version":"0.4.0","dmg":"https://…/DSH-Desktop-0.4.0.dmg","sha256":"…","note":"更新说明"}
 ```
 
-发布流程（需 GitHub 仓库 + gh CLI）：
+发布流程（需 GitHub 仓库 + gh CLI，一条命令全自动）：
 
 ```bash
-# 仓库根目录先放 version.json 模板：{"version":"0.0.0","dmg":"","sha256":"","note":""}
-bash build.sh                        # 先构建目标版本
-bash scripts/release.sh 0.4.0 "更新说明"   # 上传 DMG + 更新并推送 version.json
-# 然后用打印出的 raw URL 作为 DSH_UPDATE_URL 重新构建分发版
+# 版本号改齐（build.sh + Info.plist）、构建（自动烙更新地址）、
+# 更新并推送 version.json、创建 GitHub Release 上传 DMG —— 全部自动完成
+bash scripts/release.sh 0.5.0 "更新说明"
+
+# 或分步执行：
+bash scripts/bump-version.sh 0.5.0   # 只改版本号（build.sh + Info.plist）
+DSH_UPDATE_URL="https://raw.githubusercontent.com/<你>/<仓库>/main/version.json" bash build.sh
 ```
 
 ## 已知限制

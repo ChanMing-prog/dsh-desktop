@@ -1,29 +1,40 @@
 #!/bin/bash
-# 发布脚本：上传 DMG 到 GitHub Release 并更新 version.json
+# 一键发布：bump 版本 → 构建（自动烙更新地址）→ 更新 version.json → 推送 → GitHub Release
 #
 # 用法：
-#   bash scripts/release.sh 0.4.0 "更新说明"
+#   bash scripts/release.sh 0.5.0 "更新说明"
 #
 # 前提：
-#   1. 已安装 gh CLI 并登录（brew install gh && gh auth login）
-#   2. 项目已推到 GitHub 仓库，仓库根目录已存在 version.json（可先用下面模板建）
-#   3. 先按目标版本构建：VERSION 已在 build.sh 中改好，bash build.sh
-#      （或 DSH_UPDATE_URL=... bash build.sh 一起注入更新地址）
-#
-# version.json 模板：
-#   {"version":"0.4.0","dmg":"","sha256":"","note":""}
+#   1. gh CLI 已安装并登录（~/.local/bin/gh 或 PATH 中）
+#   2. 当前目录是已推送的 GitHub 仓库（version.json 已在仓库根目录）
+#   3. 可选：签名公证（DSH_SIGN_IDENTITY / DSH_NOTARY_PROFILE 环境变量会透传给 build.sh）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:?用法: bash scripts/release.sh <版本号> [更新说明]}"
 NOTE="${2:-DSH Desktop v${VERSION}}"
-DMG="build/DSH-Desktop-${VERSION}.dmg"
+echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "错误：版本号需为 x.y.z 格式"; exit 1; }
 
-[ -f "$DMG" ] || { echo "错误：找不到 $DMG，请先 bash build.sh（确认 VERSION=$VERSION）"; exit 1; }
-command -v gh >/dev/null 2>&1 || { echo "错误：未安装 gh CLI（brew install gh）"; exit 1; }
+if ! command -v gh >/dev/null 2>&1; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+command -v gh >/dev/null 2>&1 || { echo "错误：未安装 gh CLI（brew install gh 或装到 ~/.local/bin）"; exit 1; }
 
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) \
   || { echo "错误：当前目录不是 GitHub 仓库或未登录 gh"; exit 1; }
+UPDATE_URL="https://raw.githubusercontent.com/${REPO}/main/version.json"
+
+CUR=$(grep -o 'VERSION="[^"]*"' build.sh | head -1 | cut -d'"' -f2)
+if [ "$CUR" != "$VERSION" ]; then
+  echo "==> 更新版本号 ${CUR} -> ${VERSION}"
+  bash scripts/bump-version.sh "$VERSION"
+fi
+
+echo "==> 构建（更新地址：${UPDATE_URL}）"
+DSH_UPDATE_URL="$UPDATE_URL" bash build.sh
+
+DMG="build/DSH-Desktop-${VERSION}.dmg"
+[ -f "$DMG" ] || { echo "错误：构建产物缺失 ${DMG}"; exit 1; }
 
 SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
 DMG_URL="https://github.com/${REPO}/releases/download/v${VERSION}/DSH-Desktop-${VERSION}.dmg"
@@ -34,8 +45,8 @@ printf '{"version":"%s","dmg":"%s","sha256":"%s","note":"%s"}\n' \
 cat version.json
 echo
 
-echo "==> 提交并推送 version.json"
-git add version.json
+echo "==> 提交并推送（version.json / Info.plist / build.sh）"
+git add version.json DSHDesktop/Info.plist build.sh
 git commit -m "release v${VERSION}" || echo "（无变更，跳过提交）"
 git push
 
@@ -45,5 +56,6 @@ gh release create "v${VERSION}" "$DMG" \
   --notes "$NOTE"
 
 echo ""
-echo "发布完成！更新地址（填入 DSH_UPDATE_URL 重新构建分发版）："
-echo "  https://raw.githubusercontent.com/${REPO}/main/version.json"
+echo "发布完成！"
+echo "  下载页: https://github.com/${REPO}/releases/latest"
+echo "  更新源: ${UPDATE_URL}"
