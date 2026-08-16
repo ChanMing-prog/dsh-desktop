@@ -74,12 +74,10 @@ else
   codesign --force --deep -s - "${APP_DIR}"
 fi
 
-# ---------- 组装 DMG 内容：App + 一键安装脚本 ----------
+# ---------- 组装 DMG 内容：App + 安装说明（安装逻辑已内置 App，无需单独脚本）----------
 echo "==> 组装 DMG 内容"
 mkdir -p build/stage
 cp -R "${APP_DIR}" build/stage/
-cp scripts/install.command build/stage/安装.command
-chmod +x build/stage/安装.command
 cp 安装说明.txt build/stage/安装说明.txt
 
 echo "==> 打包 DMG"
