@@ -1,1 +1,1 @@
-{"version":"0.4.1","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.1/DSH-Desktop-0.4.1.dmg","sha256":"c22a48ba5119b8f20e6c95a17a801d1e690b4efcb736acdd16c4a1e38f8a4e76","note":"双击 DMG 中的 App 即自动安装/升级（自复制到应用程序文件夹），不再需要手动打开安装.command"}
+{"version":"0.4.2","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.2/DSH-Desktop-0.4.2.dmg","sha256":"3b019969728bdb94810afea1789129daab3d009f39ee5cc507276e136f811455","note":"安装冲突提示：已有 DSH Desktop 时可选 替换/保留两者/取消（与 macOS 标准行为一致）"}
