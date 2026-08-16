@@ -58,6 +58,25 @@ App 内嵌同款安装脚本，双击 App 首次运行缺少运行环境时自�
 
 依赖：Xcode Command Line Tools（swiftc/sips/iconutil/codesign），macOS 13+。
 
+## 视觉识别（多模态）
+
+DSH 原生插件体系里已有休眠的多模态适配器（`@deepseek-ai/dsh-llm-pi-ai`），
+本仓库随安装包分发一个小插件 `packages/dsh-vision-router` 把它接通：
+
+- **安装时自动激活**：安装器把插件装进 profile
+  （`dsh plugin --profile web add file:<插件目录>`，bundles 自动归位），
+  并在 `~/.dsh/settings.yaml` 写入 `llm-pi-ai.providers.vision` 示例配置
+  （默认智谱 GLM-4V 网关，可在「设置 → 模型」改成任意 OpenAI 兼容网关）
+- **自动路由**：监听 `agent/pre-step` / `agent/request` 瀑布事件——
+  会话历史含图且当前模型不支持 image 输入时，自动切到 vision 路由上
+  第一个多模态模型；纯文字对话不受影响
+- **升级自愈**：App 每次启动检查 profile 是否有该插件，缺失自动补装
+  （0.5.0 之前装的旧版升级后无需重装安装包）
+
+视觉网关与 API Key 在 DSH 的「设置 → 模型」页面配置（凭据写入
+`~/.dsh/.credentials.yaml` 的 `VISION_API_KEY`，也可用
+`packages/dsh-vision-router/configure-vision.mjs` 脚本配置）。
+
 ## 分发（给别人装）
 
 DMG 发给对方 → **双击 `DSH Desktop` 即可**：
