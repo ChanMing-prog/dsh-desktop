@@ -1,0 +1,17 @@
+{
+  "name": "@chanming-prog/dsh-vision-router",
+  "version": "0.1.0",
+  "description": "DSH vision router: automatically reroutes model requests to a configured multimodal provider whenever the session contains image content",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}

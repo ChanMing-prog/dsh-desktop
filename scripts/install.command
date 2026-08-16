@@ -83,6 +83,56 @@ fi
 if [ -x "$LOCAL_ROOT/nodejs/bin/dsh" ] && [ ! -e "$LOCAL_BIN/dsh" ]; then
   ln -sf "$LOCAL_ROOT/nodejs/bin/dsh" "$LOCAL_BIN/dsh"
 fi
+if [ -x "$LOCAL_ROOT/nodejs/bin/pnpm" ] && [ ! -e "$LOCAL_BIN/pnpm" ]; then
+  ln -sf "$LOCAL_ROOT/nodejs/bin/pnpm" "$LOCAL_BIN/pnpm"
+fi
+
+# ---------- 2.5 视觉路由插件（多模态自动路由）----------
+install_vision_plugin() {
+  PLUGIN_DIR="${1:-}"
+  [ -n "$PLUGIN_DIR" ] && [ -f "$PLUGIN_DIR/package.json" ] || return 0
+  command -v dsh >/dev/null 2>&1 || { log "未找到 dsh CLI，跳过视觉插件"; return 0; }
+  if ! command -v pnpm >/dev/null 2>&1; then
+    log "安装 pnpm（插件管理所需）…"
+    npm install -g pnpm --no-fund --no-audit >/dev/null 2>&1 || { log "pnpm 安装失败，跳过视觉插件"; return 0; }
+    export PATH="$LOCAL_BIN:$PATH"
+  fi
+  log "安装视觉路由插件…"
+  if dsh plugin --profile web add "file:$PLUGIN_DIR" >/dev/null 2>&1; then
+    log "视觉路由插件已激活（含图会话自动切换多模态模型）"
+  else
+    log "视觉插件安装失败（不影响主功能，可稍后重装）"
+  fi
+}
+
+activate_vision_route() {
+  # 用默认网关（智谱 GLM-4V 示例）写 llm-pi-ai 视觉配置段；已存在则不动。
+  # 用户之后可在 DSH 设置 → 模型 中改成自己的网关/模型。
+  DSH_BIN_PATH="$(command -v dsh 2>/dev/null || true)"
+  [ -n "$DSH_BIN_PATH" ] || return 0
+  REAL_BIN="$(readlink "$DSH_BIN_PATH" 2>/dev/null || echo "$DSH_BIN_PATH")"
+  DSH_ROOT="$(cd "$(dirname "$REAL_BIN")/.." 2>/dev/null && pwd)"
+  HELPER="$PLUGIN_DIR_GLOBAL/configure-vision.mjs"
+  [ -f "$HELPER" ] || return 0
+  if ! grep -q "llm-pi-ai:" "$HOME/.dsh/settings.yaml" 2>/dev/null; then
+    DSH_ROOT="$DSH_ROOT" node "$HELPER" >/dev/null 2>&1 \
+      && log "视觉路由已激活（默认网关示例，可在 设置 → 模型 修改）" \
+      || log "视觉路由配置写入失败（可在 设置 → 模型 手动配置）"
+  fi
+}
+
+if [ "${DSH_INSTALL_VISION_ONLY:-0}" = "1" ]; then
+  # 仅补装视觉能力（App 每次启动自检：老版本升级后自动补装）
+  PLUGIN_DIR_GLOBAL=""
+  if [ -n "${DSH_APP_BUNDLE:-}" ] && [ -d "${DSH_APP_BUNDLE}/Contents/Resources/vision-router" ]; then
+    PLUGIN_DIR_GLOBAL="${DSH_APP_BUNDLE}/Contents/Resources/vision-router"
+  elif [ -d "$SCRIPT_DIR/$APP_NAME/Contents/Resources/vision-router" ]; then
+    PLUGIN_DIR_GLOBAL="$SCRIPT_DIR/$APP_NAME/Contents/Resources/vision-router"
+  fi
+  install_vision_plugin "$PLUGIN_DIR_GLOBAL"
+  activate_vision_route
+  exit 0
+fi
 
 # ---------- 3. API 凭据（可选，可稍后在 App「设置 → 模型」里补填）----------
 CRED_FILE="$HOME/.dsh/.credentials.yaml"
@@ -101,6 +151,46 @@ else
     printf 'DEEPSEEK_API_KEY: %s\n' "$API_KEY" > "$CRED_FILE"
     chmod 600 "$CRED_FILE"
     log "凭据已写入 ${CRED_FILE}"
+  fi
+fi
+
+# ---------- 3.5 视觉能力 ----------
+# 定位 App 内嵌的视觉插件目录
+if [ "$GUI_MODE" = "1" ] && [ -n "${DSH_APP_BUNDLE:-}" ]; then
+  PLUGIN_DIR_GLOBAL="${DSH_APP_BUNDLE}/Contents/Resources/vision-router"
+elif [ -d "$SCRIPT_DIR/$APP_NAME/Contents/Resources/vision-router" ]; then
+  PLUGIN_DIR_GLOBAL="$SCRIPT_DIR/$APP_NAME/Contents/Resources/vision-router"
+else
+  PLUGIN_DIR_GLOBAL=""
+fi
+install_vision_plugin "$PLUGIN_DIR_GLOBAL"
+activate_vision_route
+
+# 交互模式：可选引导配置视觉网关
+if [ "$GUI_MODE" = "0" ] && [ -t 0 ] && [ -f "$PLUGIN_DIR_GLOBAL/configure-vision.mjs" ]; then
+  printf "配置视觉识别网关？（直接回车跳过，之后可在 DSH 设置 → 模型 中配置）[y/N]："
+  read -r VISION_YN
+  if [ "$VISION_YN" = "y" ] || [ "$VISION_YN" = "Y" ]; then
+    printf "接口地址 baseURL（默认 https://open.bigmodel.cn/api/paas/v4）："
+    read -r VISION_BASE_URL; [ -z "$VISION_BASE_URL" ] && VISION_BASE_URL="https://open.bigmodel.cn/api/paas/v4"
+    printf "多模态模型 ID（默认 glm-4v-flash）："
+    read -r VISION_MODEL; [ -z "$VISION_MODEL" ] && VISION_MODEL="glm-4v-flash"
+    printf "模型显示名称（默认 视觉识别模型）："
+    read -r VISION_NAME; [ -z "$VISION_NAME" ] && VISION_NAME="视觉识别模型"
+    printf "视觉 API Key（sk-…，可回车跳过稍后在设置中填）："
+    read -r VISION_KEY
+    DSH_BIN_PATH="$(command -v dsh 2>/dev/null || true)"
+    REAL_BIN="$(readlink "$DSH_BIN_PATH" 2>/dev/null || echo "$DSH_BIN_PATH")"
+    DSH_ROOT="$(cd "$(dirname "$REAL_BIN")/.." 2>/dev/null && pwd)"
+    if [ -n "$VISION_KEY" ]; then
+      DSH_ROOT="$DSH_ROOT" node "$PLUGIN_DIR_GLOBAL/configure-vision.mjs" \
+        --base-url "$VISION_BASE_URL" --model "$VISION_MODEL" --name "$VISION_NAME" --api-key "$VISION_KEY" \
+        && log "视觉网关已配置：$VISION_BASE_URL（$VISION_MODEL）"
+    else
+      DSH_ROOT="$DSH_ROOT" node "$PLUGIN_DIR_GLOBAL/configure-vision.mjs" \
+        --base-url "$VISION_BASE_URL" --model "$VISION_MODEL" --name "$VISION_NAME" \
+        && log "视觉网关已配置（未填 Key，可在 设置 → 模型 中补）"
+    fi
   fi
 fi
 

@@ -16,6 +16,16 @@ DSH Desktop 安装说明
 2. 装好后打开 DSH，在「设置 → 模型」里填写自己的 DeepSeek API Key
    （sk- 开头，在 platform.deepseek.com 获取），即可开始使用。
 
+【视觉识别（多模态）】
+
+安装时已自动激活视觉能力：
+- 视觉路由插件随 App 自动安装（含图会话自动切换到多模态模型）
+- 默认预置了一个示例网关（智谱 GLM-4V：https://open.bigmodel.cn/api/paas/v4，
+  模型 glm-4v-flash）。在「设置 → 模型」里改成你自己的网关/模型并填入
+  对应的 API Key 即可。
+- 对话中粘贴/上传图片，DSH 会自动调用多模态模型识别；纯文字对话仍走
+  原来的 DeepSeek 模型，互不影响。
+
 3. 已安装的版本会自动检查更新（App 本身 + DeepSeek Harness 运行时）：
    发现新版本时会弹提示，点击下载/升级即可；也可随时在菜单栏
    「DSH → 检查更新…」「DSH → 检查 DeepSeek Harness 更新…」手动查看。

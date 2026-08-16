@@ -349,12 +349,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.checkDshUpdate(manual: false)
             }
         }
+        // 8 秒后自检视觉插件：缺失则自动补装（老版本升级无缝获得视觉能力）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            self?.ensureVisionPlugin()
+        }
 
         // 自动化测试钩子：N 秒后走完整退出流程
         if let secs = env("DSH_DESKTOP_AUTO_QUIT_SECONDS"), let delay = Double(secs) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 NSApp.terminate(nil)
             }
+        }
+    }
+
+    // MARK: 视觉插件自愈
+
+    func ensureVisionPlugin() {
+        // 运行时未就绪时跳过（首次安装由引导安装器处理）
+        guard findNodeExecutable() != nil,
+              findDshEntry(nodePath: findNodeExecutable()) != nil else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let manifestURL = URL(fileURLWithPath: "\(home)/.dsh/profiles/web/package.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dshSection = obj["dsh"] as? [String: Any],
+              let profileSection = dshSection["profile"] as? [String: Any],
+              let bundles = profileSection["bundles"] as? [String] else { return }
+        if bundles.contains("@chanming-prog/dsh-vision-router") { return }
+
+        guard let scriptURL = Bundle.main.url(forResource: "install", withExtension: "sh") else { return }
+        NSLog("dsh-desktop: vision plugin missing, self-healing install")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [scriptURL.path]
+        var taskEnv = ProcessInfo.processInfo.environment
+        taskEnv["DSH_INSTALL_GUI"] = "1"
+        taskEnv["DSH_INSTALL_VISION_ONLY"] = "1"
+        taskEnv["DSH_APP_BUNDLE"] = Bundle.main.bundlePath
+        taskEnv["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin:\(home)/.local/nodejs/bin"
+        task.environment = taskEnv
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                NSLog("[dsh-vision] %@", text)
+            }
+        }
+        task.terminationHandler = { proc in
+            NSLog("dsh-desktop: vision plugin ensure finished (exit %d)", proc.terminationStatus)
+        }
+        do {
+            try task.run()
+        } catch {
+            NSLog("dsh-desktop: vision plugin ensure failed to start: %@", error.localizedDescription)
         }
     }
 

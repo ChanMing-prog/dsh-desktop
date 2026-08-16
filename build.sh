@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 APP_NAME="DSH Desktop"
 APP_DIR="build/${APP_NAME}.app"
-VERSION="0.4.3"
+VERSION="0.5.0"
 DMG="build/DSH-Desktop-${VERSION}.dmg"
 
 echo "==> 清理并创建 App 骨架"
@@ -50,6 +50,9 @@ if [ -n "${DSH_UPDATE_URL:-}" ]; then
 fi
 cp scripts/install.command "${APP_DIR}/Contents/Resources/install.sh"
 chmod +x "${APP_DIR}/Contents/Resources/install.sh"
+rm -rf "${APP_DIR}/Contents/Resources/vision-router"
+cp -R packages/dsh-vision-router "${APP_DIR}/Contents/Resources/vision-router"
+rm -rf "${APP_DIR}/Contents/Resources/vision-router/node_modules" 2>/dev/null || true
 
 xattr -cr "${APP_DIR}" 2>/dev/null || true
 # macOS 26 的 provenance / iCloud File Provider 属性会阻断 codesign，定向清除

@@ -1,0 +1,7 @@
+# dsh-vision-router bundle patch: one plugin row. The route name ("vision")
+# defaults to the profile the installer activates in llm-pi-ai; override the
+# plugin config here (or in the profile's cordis.patch.yml) if the provider
+# route is named differently.
+- insert:
+    - id: vision-router
+      name: '@chanming-prog/dsh-vision-router'
