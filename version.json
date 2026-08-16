@@ -1,1 +1,1 @@
-{"version":"0.4.3","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.3/DSH-Desktop-0.4.3.dmg","sha256":"8b07c37c469fe2b1ac272198a63819b6a1cc3079c9c11de88e07eed02dfe8bba","note":"新增 DeepSeek Harness 运行时更新检查：查 npm registry，发现新版一键升级 dsh"}
+{"version":"0.4.4","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.4/DSH-Desktop-0.4.4.dmg","sha256":"31ce66933084a5d09fee40d22d0329362df3ef93bf1b701dd70dbdd461afb0cc","note":"内置视觉识别插件：自定义 OpenAI 兼容端点（小米 MiMo/智谱/通义等），安装与升级自动部署；识图观察内联消息，超长会话不丢失；只分析新发图片"}
