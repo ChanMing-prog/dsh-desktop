@@ -11,8 +11,6 @@
 // 环境变量：
 //   DSH_NODE_PATH         node 可执行文件绝对路径（默认自动探测）
 //   DSH_BIN_PATH          dsh bin.js 绝对路径（默认 ~/.local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js）
-//   DSH_NODE_ARCH        自起 node 的架构（如 x86_64，经 /usr/bin/arch 启动；需已安装 Rosetta）
-//   DSH_NODE_OPTIONS     追加给自起 node 的 Node.js 选项（如 --jitless）
 //   DSH_DESKTOP_PORT      探测端口（默认 3080；测试用）
 //   DSH_DESKTOP_SINGLE_INSTANCE  设为 0 关闭单实例
 //   DSH_DESKTOP_AUTO_QUIT_SECONDS  启动 N 秒后自动退出（自动化测试钩子）
@@ -250,15 +248,8 @@ final class DshServer {
     private var onFail: ((String) -> Void)?
 
     init(nodePath: String, dshEntry: String) {
-        // 可选：用指定架构启动 node（如 x86_64），绕开 macOS 26 ARM64 的 JIT 内核 bug
-        let nodeArch = env("DSH_NODE_ARCH")?.trimmingCharacters(in: .whitespaces)
-        if let nodeArch = nodeArch, !nodeArch.isEmpty {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
-            process.arguments = ["-\(nodeArch)", nodePath, dshEntry, "--profile", "web", "--port", "0"]
-        } else {
-            process.executableURL = URL(fileURLWithPath: nodePath)
-            process.arguments = [dshEntry, "--profile", "web", "--port", "0"]
-        }
+        process.executableURL = URL(fileURLWithPath: nodePath)
+        process.arguments = [dshEntry, "--profile", "web", "--port", "0"]
         process.standardOutput = outPipe
         process.standardError = errPipe
 
@@ -267,11 +258,6 @@ final class DshServer {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extraPath = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin"
         processEnv["PATH"] = "\(extraPath):\(processEnv["PATH"] ?? "")"
-        // 可选：追加 Node.js 运行选项（如 --jitless），默认不注入
-        if let nodeOptions = env("DSH_NODE_OPTIONS")?.trimmingCharacters(in: .whitespaces), !nodeOptions.isEmpty {
-            let existing = processEnv["NODE_OPTIONS"]?.trimmingCharacters(in: .whitespaces) ?? ""
-            processEnv["NODE_OPTIONS"] = existing.isEmpty ? nodeOptions : "\(existing) \(nodeOptions)"
-        }
         process.environment = processEnv
 
         // 工作目录放到 home，避免相对路径落到 "/"
@@ -687,15 +673,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self = self else { return }
                 if proc.terminationStatus == 0 {
                     NSLog("dsh-desktop: dsh upgraded to %@", latest)
-                    // npm 会把跨架构原生模块清掉，先补齐 x64 再重启服务，避免 x86_64 模式起不来
-                    self.runCrossArchReinstall {
-                        if !self.serverIsExternal, self.server != nil {
-                            self.server?.stop()
-                            self.startOwnServer()
-                            self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)，服务已自动重启生效。")
-                        } else {
-                            self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)。\n下次启动 DSH 时生效。")
-                        }
+                    // 自己拉起的服务立即重启生效；复用的外部服务下次启动生效
+                    if !self.serverIsExternal, self.server != nil {
+                        self.server?.stop()
+                        self.startOwnServer()
+                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)，服务已自动重启生效。")
+                    } else {
+                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)。\n下次启动 DSH 时生效。")
                     }
                 } else {
                     lock.lock()
@@ -709,43 +693,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try task.run()
         } catch {
             showUpdateAlert(title: "升级失败", message: "无法启动 npm：\(error.localizedDescription)")
-        }
-    }
-
-    /// dsh 升级（npm install -g）会清掉 x64 原生模块，这里调用内置安装脚本重新补齐后回调。
-    func runCrossArchReinstall(completion: @escaping () -> Void) {
-        guard let scriptURL = Bundle.main.url(forResource: "install", withExtension: "sh") else {
-            completion()
-            return
-        }
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [scriptURL.path]
-        var taskEnv = ProcessInfo.processInfo.environment
-        taskEnv["DSH_INSTALL_CROSS_ARCH_ONLY"] = "1"
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        taskEnv["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin:\(home)/.local/nodejs/bin"
-        task.environment = taskEnv
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                NSLog("[dsh-x64] %@", text)
-            }
-        }
-        task.terminationHandler = { proc in
-            DispatchQueue.main.async {
-                NSLog("dsh-desktop: cross-arch native reinstall finished (exit %d)", proc.terminationStatus)
-                completion()
-            }
-        }
-        do {
-            try task.run()
-        } catch {
-            NSLog("dsh-desktop: cross-arch native reinstall failed to start: %@", error.localizedDescription)
-            completion()
         }
     }
 

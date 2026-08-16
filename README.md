@@ -37,8 +37,6 @@
 |---|---|
 | `DSH_NODE_PATH` | node 绝对路径（默认自动探测） |
 | `DSH_BIN_PATH` | dsh `bin.js` 绝对路径（默认按 node 前缀 + 常见全局目录探测） |
-| `DSH_NODE_ARCH` | 自起 node 的架构（如 `x86_64`，经 `/usr/bin/arch` 启动；需先装 Rosetta） |
-| `DSH_NODE_OPTIONS` | 追加给自起 node 的 Node.js 选项（如 `--jitless`） |
 | `DSH_DESKTOP_PORT` | 探测端口（默认 3080） |
 | `DSH_DESKTOP_SINGLE_INSTANCE=0` | 关闭单实例 |
 | `DSH_DESKTOP_AUTO_QUIT_SECONDS` / `DSH_DESKTOP_HIDDEN` | 自动化测试钩子 |
