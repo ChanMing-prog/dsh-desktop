@@ -375,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let dshSection = obj["dsh"] as? [String: Any],
               let profileSection = dshSection["profile"] as? [String: Any],
               let bundles = profileSection["bundles"] as? [String] else { return }
-        if bundles.contains("@chanming-prog/dsh-vision-router") { return }
+        if bundles.contains("@chanming-prog/dsh-vision") { return }
 
         guard let scriptURL = Bundle.main.url(forResource: "install", withExtension: "sh") else { return }
         NSLog("dsh-desktop: vision plugin missing, self-healing install")
