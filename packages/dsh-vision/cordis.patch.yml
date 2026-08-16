@@ -1,0 +1,5 @@
+- id: llm-deepseek
+  disabled: true
+- insert:
+    - id: dsh-vision
+      name: "@chanming-prog/dsh-vision"

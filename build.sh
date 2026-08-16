@@ -50,9 +50,9 @@ if [ -n "${DSH_UPDATE_URL:-}" ]; then
 fi
 cp scripts/install.command "${APP_DIR}/Contents/Resources/install.sh"
 chmod +x "${APP_DIR}/Contents/Resources/install.sh"
-rm -rf "${APP_DIR}/Contents/Resources/vision-router"
-cp -R packages/dsh-vision-router "${APP_DIR}/Contents/Resources/vision-router"
-rm -rf "${APP_DIR}/Contents/Resources/vision-router/node_modules" 2>/dev/null || true
+rm -rf "${APP_DIR}/Contents/Resources/dsh-vision"
+cp -R packages/dsh-vision "${APP_DIR}/Contents/Resources/dsh-vision"
+rm -rf "${APP_DIR}/Contents/Resources/dsh-vision/node_modules" 2>/dev/null || true
 
 xattr -cr "${APP_DIR}" 2>/dev/null || true
 # macOS 26 的 provenance / iCloud File Provider 属性会阻断 codesign，定向清除
