@@ -1,1 +1,1 @@
-{"version":"0.5.0","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.5.0/DSH-Desktop-0.5.0.dmg","sha256":"013a930ff39a9e43fc162b50cc4a16e5810bc1b4ab87b8a0f1855560959c021a","note":"视觉识别集成：自动路由多模态插件（含图自动切换视觉模型）+ 安装器自动激活 + 升级自愈"}
+{"version":"0.4.3","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.3/DSH-Desktop-0.4.3.dmg","sha256":"8b07c37c469fe2b1ac272198a63819b6a1cc3079c9c11de88e07eed02dfe8bba","note":"新增 DeepSeek Harness 运行时更新检查：查 npm registry，发现新版一键升级 dsh"}
