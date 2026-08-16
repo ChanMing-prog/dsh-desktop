@@ -1,1 +1,1 @@
-{"version":"0.4.0","dmg":"","sha256":"","note":""}
+{"version":"0.4.0","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.0/DSH-Desktop-0.4.0.dmg","sha256":"69d6c2d75f425b345ccc23c1f06a4172437b364acf71ce44bc57cbaa9a610b5f","note":"首个正式分发版：双击即装（自动安装 node/dsh）、支持自动更新、通用二进制（Intel/Apple Silicon）"}
