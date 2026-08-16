@@ -168,17 +168,49 @@ func currentAppVersion() -> String {
     (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
 }
 
-/// 比较 "1.2.3" 形式的版本号
+/// 比较版本号（semver 风格：支持 "0.1.0-rc.6" 这类预发布版本；正式版 > 预发布版）
 func compareVersion(_ a: String, _ b: String) -> ComparisonResult {
-    let av = a.split(separator: ".").compactMap { Int($0) }
-    let bv = b.split(separator: ".").compactMap { Int($0) }
-    let n = max(av.count, bv.count)
+    func parse(_ s: String) -> (numbers: [Int], prerelease: String) {
+        let parts = s.split(separator: "-", maxSplits: 1)
+        let core = String(parts[0])
+        let pre = parts.count > 1 ? String(parts[1]) : ""
+        let nums = core.split(separator: ".").map { Int($0.prefix(while: { $0.isNumber })) ?? 0 }
+        return (nums, pre)
+    }
+    let pa = parse(a)
+    let pb = parse(b)
+    let n = max(pa.numbers.count, pb.numbers.count)
     for i in 0..<n {
-        let x = i < av.count ? av[i] : 0
-        let y = i < bv.count ? bv[i] : 0
+        let x = i < pa.numbers.count ? pa.numbers[i] : 0
+        let y = i < pb.numbers.count ? pb.numbers[i] : 0
         if x != y { return x < y ? .orderedAscending : .orderedDescending }
     }
-    return .orderedSame
+    if pa.prerelease.isEmpty && !pb.prerelease.isEmpty { return .orderedDescending }
+    if !pa.prerelease.isEmpty && pb.prerelease.isEmpty { return .orderedAscending }
+    if pa.prerelease == pb.prerelease { return .orderedSame }
+    return pa.prerelease < pb.prerelease ? .orderedAscending : .orderedDescending
+}
+
+// MARK: - DeepSeek Harness（dsh 运行时）版本检查
+
+/// dsh 版本数据源：环境变量 DSH_DSH_REGISTRY_URL 优先，其次 Info.plist，最后 npm registry
+func dshRegistryURL() -> String? {
+    if let v = env("DSH_DSH_REGISTRY_URL"), !v.isEmpty { return v }
+    if let v = Bundle.main.object(forInfoDictionaryKey: "DSHRegistryURL") as? String, !v.isEmpty { return v }
+    return "https://registry.npmjs.org/@deepseek-ai/dsh/latest"
+}
+
+/// 本机已装 dsh 版本：bin.js → <包目录>/package.json
+func installedDshVersion(entry: String?) -> String? {
+    guard let entry = entry else { return nil }
+    let pkg = URL(fileURLWithPath: entry)
+        .deletingLastPathComponent()   // lib
+        .deletingLastPathComponent()   // <pkg>
+        .appendingPathComponent("package.json")
+    guard let data = try? Data(contentsOf: pkg),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let version = obj["version"] as? String else { return nil }
+    return version
 }
 
 func sha256Hex(of url: URL) -> String {
@@ -311,6 +343,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env("DSH_DESKTOP_UPDATE_CHECK") != "0" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                 self?.checkForUpdates(manual: false)
+            }
+            // 10 秒后检查 DeepSeek Harness（dsh 运行时）更新
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                self?.checkDshUpdate(manual: false)
             }
         }
 
@@ -494,6 +530,138 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    // MARK: DeepSeek Harness（dsh）更新检查
+
+    private var dshUpdateChecked = false
+
+    @objc func checkDshUpdateAction() {
+        checkDshUpdate(manual: true)
+    }
+
+    func checkDshUpdate(manual: Bool) {
+        guard let urlStr = dshRegistryURL(), let url = URL(string: urlStr) else { return }
+        if dshUpdateChecked && !manual { return }
+        dshUpdateChecked = true
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let self = self, error == nil, let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let latest = obj["version"] as? String, !latest.isEmpty else {
+                if manual {
+                    DispatchQueue.main.async {
+                        self?.showUpdateAlert(title: "检查 Harness 更新", message: "获取版本信息失败，请稍后重试。")
+                    }
+                }
+                return
+            }
+            DispatchQueue.main.async {
+                guard let current = installedDshVersion(entry: findDshEntry(nodePath: findNodeExecutable())) else {
+                    if manual {
+                        self.showUpdateAlert(title: "检查 Harness 更新", message: "未检测到本机的 dsh 安装。")
+                    }
+                    return
+                }
+                if compareVersion(latest, current) == .orderedDescending {
+                    if !manual {
+                        let defaults = UserDefaults.standard
+                        if defaults.string(forKey: "lastDshUpdatePrompt") == latest { return }
+                        defaults.set(latest, forKey: "lastDshUpdatePrompt")
+                    }
+                    NSLog("dsh-desktop: dsh update available %@ (current %@)", latest, current)
+                    self.promptDshUpdate(latest: latest, current: current)
+                } else if manual {
+                    self.showUpdateAlert(title: "检查 Harness 更新", message: "DeepSeek Harness 已是最新版本（\(current)）。")
+                }
+            }
+        }.resume()
+    }
+
+    func promptDshUpdate(latest: String, current: String) {
+        // 测试钩子：静默模式只记日志
+        if env("DSH_DESKTOP_DSH_SILENT") == "1" {
+            NSLog("dsh-desktop: [dsh-update-silent] would prompt %@ (current %@)", latest, current)
+            return
+        }
+        let decision: String
+        if let override = env("DSH_DESKTOP_DSH_CHOICE") {
+            decision = override   // 测试钩子: 1=立即升级 2=稍后
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "DeepSeek Harness 有新版"
+            alert.informativeText = "当前版本：\(current)\n最新版本：\(latest)\n\n源码仓库：github.com/deepseek-ai/deepseek-harness\n\n是否立即升级（约 300MB，视网络需要几分钟）？"
+            alert.addButton(withTitle: "立即升级")
+            alert.addButton(withTitle: "稍后")
+            decision = alert.runModal() == .alertFirstButtonReturn ? "1" : "2"
+        }
+        if decision == "1" {
+            runDshUpgrade(latest: latest)
+        }
+    }
+
+    func runDshUpgrade(latest: String) {
+        NSLog("dsh-desktop: upgrading dsh to %@ ...", latest)
+
+        // npm 绝对路径：优先 node 同级目录，找不到再依赖 PATH
+        var npmPath = "npm"
+        if let node = findNodeExecutable() {
+            let sibling = URL(fileURLWithPath: node).deletingLastPathComponent().appendingPathComponent("npm")
+            if FileManager.default.isExecutableFile(atPath: sibling.path) { npmPath = sibling.path }
+        }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: npmPath)
+        task.arguments = ["install", "-g", "@deepseek-ai/dsh@latest", "--no-fund", "--no-audit"]
+        var taskEnv = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extraPath = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(home)/.local/bin:\(home)/.local/nodejs/bin"
+        taskEnv["PATH"] = "\(extraPath):\(taskEnv["PATH"] ?? "")"
+        task.environment = taskEnv
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        let lock = NSLock()
+        var tail = ""
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            NSLog("[dsh-upgrade] %@", text)
+            lock.lock()
+            tail += text
+            if tail.count > 8192 { tail = String(tail.suffix(8192)) }
+            lock.unlock()
+        }
+        task.terminationHandler = { [weak self] proc in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if proc.terminationStatus == 0 {
+                    NSLog("dsh-desktop: dsh upgraded to %@", latest)
+                    // 自己拉起的服务立即重启生效；复用的外部服务下次启动生效
+                    if !self.serverIsExternal, self.server != nil {
+                        self.server?.stop()
+                        self.startOwnServer()
+                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)，服务已自动重启生效。")
+                    } else {
+                        self.showUpdateAlert(title: "升级完成", message: "DeepSeek Harness 已升级到 \(latest)。\n下次启动 DSH 时生效。")
+                    }
+                } else {
+                    lock.lock()
+                    let detail = String(tail.suffix(1200))
+                    lock.unlock()
+                    self.showUpdateAlert(title: "升级失败", message: "升级进程退出码 \(proc.terminationStatus)。\n可在终端手动执行 npm install -g @deepseek-ai/dsh@latest\n\n日志末尾：\n\(htmlEscape(detail))")
+                }
+            }
+        }
+        do {
+            try task.run()
+        } catch {
+            showUpdateAlert(title: "升级失败", message: "无法启动 npm：\(error.localizedDescription)")
+        }
+    }
+
     func createWindow() {
         let rect = NSRect(x: 0, y: 0, width: 1440, height: 900)
         window = NSWindow(contentRect: rect,
@@ -674,6 +842,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let checkUpdateItem = NSMenuItem(title: "检查更新…", action: #selector(AppDelegate.checkForUpdatesAction), keyEquivalent: "")
         checkUpdateItem.target = self
         appMenu.addItem(checkUpdateItem)
+        let checkDshItem = NSMenuItem(title: "检查 DeepSeek Harness 更新…", action: #selector(AppDelegate.checkDshUpdateAction), keyEquivalent: "")
+        checkDshItem.target = self
+        appMenu.addItem(checkDshItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "隐藏 DSH", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())

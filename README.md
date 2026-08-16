@@ -71,9 +71,15 @@ DMG 发给对方 → **双击 `DSH Desktop` 即可**：
 
 ## 自动更新
 
-App 启动后 5 秒后台请求 `DSHUpdateURL`（Info.plist，构建时注入）指向的
+**App 本身**：启动后 5 秒后台请求 `DSHUpdateURL`（Info.plist，构建时注入）指向的
 `version.json`，发现新版本弹提示框，一键下载新 DMG（SHA256 校验）。
-对方重跑一次安装脚本即完成升级（已装组件自动跳过，几秒）。
+对方双击新 DMG 里的 App 即完成升级（弹「替换/保留两者/取消」选择）。
+
+**DeepSeek Harness 运行时（dsh）**：启动后 10 秒查询
+`DSHRegistryURL`（默认 https://registry.npmjs.org/@deepseek-ai/dsh/latest），
+发现新版弹提示框，一键执行 `npm install -g @deepseek-ai/dsh@latest`，
+升级后自动重启 App 自起的服务（复用的外部服务下次启动生效）。
+菜单栏「DSH → 检查 DeepSeek Harness 更新…」可手动检查。
 
 `version.json` 格式：
 
