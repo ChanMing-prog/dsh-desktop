@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 APP_NAME="DSH Desktop"
 APP_DIR="build/${APP_NAME}.app"
-VERSION="0.4.6"
+VERSION="0.4.7"
 DMG="build/DSH-Desktop-${VERSION}.dmg"
 
 echo "==> 清理并创建 App 骨架"

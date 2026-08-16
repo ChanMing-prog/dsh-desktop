@@ -1,1 +1,1 @@
-{"version":"0.4.6","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.6/DSH-Desktop-0.4.6.dmg","sha256":"a0da5936e22de542ee7b59dcad56369babac0f00dfddd88f03f689cfaf4f5bef","note":"DMG 精简：安装包只含 App 与安装说明（安装逻辑已内置 App，双击即自动安装到应用程序并补装视觉插件）"}
+{"version":"0.4.7","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.4.7/DSH-Desktop-0.4.7.dmg","sha256":"78674b152e184e2f662790d092d408896f291acf31aa367cd699b8813dd19b8d","note":"安装体验优化：从安装包双击 App 时先弹安装对话框（替换/保留两者/取消），装完自动切换并退出，不再先打开完整 DSH 页面"}
