@@ -301,6 +301,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         createWindow()
         boot()
 
+        // 从磁盘镜像（DMG）运行时，自动复制到 ~/Applications（首次安装与升级都适用）
+        selfInstallFromVolumeIfNeeded()
+
         // 启动 5 秒后后台检查更新（DSH_DESKTOP_UPDATE_CHECK=0 可关闭）
         if env("DSH_DESKTOP_UPDATE_CHECK") != "0" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -312,6 +315,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let secs = env("DSH_DESKTOP_AUTO_QUIT_SECONDS"), let delay = Double(secs) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 NSApp.terminate(nil)
+            }
+        }
+    }
+
+    // MARK: 从 DMG 自安装
+
+    func selfInstallFromVolumeIfNeeded() {
+        let bundlePath = Bundle.main.bundlePath
+        guard bundlePath.hasPrefix("/Volumes/") else { return }
+        let appName = (bundlePath as NSString).lastPathComponent
+        guard let destDir = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first else { return }
+        let dest = destDir.appendingPathComponent(appName)
+        DispatchQueue.global(qos: .utility).async {
+            let fm = FileManager.default
+            do {
+                if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+                try fm.copyItem(atPath: bundlePath, toPath: dest.path)
+                NSLog("dsh-desktop: copied self from DMG to %@", dest.path)
+            } catch {
+                NSLog("dsh-desktop: self-copy from DMG failed: %@", error.localizedDescription)
             }
         }
     }
@@ -408,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     NSWorkspace.shared.open(dest)
                     self.showUpdateAlert(title: "更新",
-                                         message: "已下载更新包并打开。\n在打开的窗口里双击「安装.command」即可完成升级（已装组件会自动跳过，只需几秒）。")
+                                         message: "已下载更新包并打开。\n在打开的窗口里双击「DSH Desktop」即可完成升级（会自动替换已装版本，已装组件跳过）。")
                 } catch {
                     self.showUpdateAlert(title: "更新", message: "保存更新包失败：\(error.localizedDescription)")
                 }
