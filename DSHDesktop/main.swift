@@ -59,6 +59,67 @@ func uniqueDownloadURL(_ base: URL) -> URL {
     return url
 }
 
+// MARK: - 清理历史残留的视觉插件（0.4.6 及更早版本的自动安装产物）
+
+/// 0.4.6 及更早版本会在每次启动时自动把视觉插件（dsh-vision / dsh-vision-router）
+/// 装进 profile 的 bundles 并安装到 node_modules；0.4.7+ 已不再安装，
+/// 但已污染的 profile 不会被自动清理，导致升级后视觉插件仍被加载。
+///
+/// 本函数在每次启动时做幂等清理：扫描 ~/.dsh/profiles 下所有 profile，
+/// 从 package.json 的 `dsh.profile.bundles` 数组移除 vision 相关包，
+/// 并删除 node_modules 里已安装的插件目录（含 pnpm 虚拟 store 的副本）。
+/// 无残留时不做任何事，可安全地在每次启动时调用。
+@discardableResult
+func purgeLegacyVisionPlugins() -> Bool {
+    let fm = FileManager.default
+    let home = fm.homeDirectoryForCurrentUser.path
+    let profilesDir = "\(home)/.dsh/profiles"
+    let visionPackages = ["@deepseek-ai/dsh-vision", "@deepseek-ai/dsh-vision-router"]
+    guard let profiles = try? fm.contentsOfDirectory(atPath: profilesDir) else { return false }
+    var changed = false
+    for profile in profiles {
+        let dir = "\(profilesDir)/\(profile)"
+        let pkgPath = "\(dir)/package.json"
+        guard fm.fileExists(atPath: pkgPath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: pkgPath)),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var dsh = json["dsh"] as? [String: Any],
+              var profileCfg = dsh["profile"] as? [String: Any],
+              var bundles = profileCfg["bundles"] as? [String] else { continue }
+        let before = bundles
+        bundles.removeAll { visionPackages.contains($0) }
+        guard bundles.count != before.count else { continue }
+        profileCfg["bundles"] = bundles
+        dsh["profile"] = profileCfg
+        json["dsh"] = dsh
+        do {
+            let out = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+            try out.write(to: URL(fileURLWithPath: pkgPath), options: .atomic)
+            changed = true
+            NSLog("dsh-desktop: 已从 profile %@ 移除视觉插件 bundles：%@", profile, before.filter { visionPackages.contains($0) }.joined(separator: ", "))
+        } catch {
+            NSLog("dsh-desktop: 清理 profile %@ 的 bundles 失败：%@", profile, error.localizedDescription)
+        }
+        // 删除已安装的插件目录：node_modules 直链 + pnpm 虚拟 store（.pnpm）副本
+        for pkg in visionPackages {
+            let direct = "\(dir)/node_modules/\(pkg)"
+            if fm.fileExists(atPath: direct) {
+                try? fm.removeItem(atPath: direct)
+                NSLog("dsh-desktop: 已删除 %@", direct)
+            }
+        }
+        let pnpmDir = "\(dir)/node_modules/.pnpm"
+        if let entries = try? fm.contentsOfDirectory(atPath: pnpmDir) {
+            for entry in entries where entry.contains("dsh-vision") {
+                let path = "\(pnpmDir)/\(entry)"
+                try? fm.removeItem(atPath: path)
+                NSLog("dsh-desktop: 已删除 %@", path)
+            }
+        }
+    }
+    return changed
+}
+
 func htmlEscape(_ s: String) -> String {
     s.replacingOccurrences(of: "&", with: "&amp;")
      .replacingOccurrences(of: "<", with: "&lt;")
@@ -999,6 +1060,11 @@ extension AppDelegate: WKDownloadDelegate {
 }
 
 // MARK: - 入口
+
+// 清理 0.4.6 及更早版本自动安装的视觉插件残留（幂等，无残留时无副作用）。
+// 放在单实例检查之前：即使新副本因「已有旧版在运行」而立即退出，
+// 残留也已被清理，下次启动不会再加载视觉插件。
+purgeLegacyVisionPlugins()
 
 // 单实例：已有实例则激活它并退出。
 // 例外：从安装源（DMG 卷 / 下载 / 桌面）运行的实例不退出——

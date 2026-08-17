@@ -30,6 +30,11 @@
 - 窗口菜单自带拷贝/粘贴/全选（WKWebView 必需），Cmd+R 重载；
   非本地链接、`window.open` 交给系统浏览器；下载自动存到 `~/Downloads`。
 - 单实例：重复打开只会激活已有窗口。
+- **启动时自动清理历史残留的视觉插件**：0.4.6 及更早版本会在每次启动时把
+  视觉插件（dsh-vision / dsh-vision-router）自动装进 profile 的 bundles；
+  0.4.9 起每次启动幂等扫描 `~/.dsh/profiles/*`，从 `bundles` 移除这些包并
+  删除已安装目录（含 pnpm store），从旧版本升级后视觉插件不会残留，
+  无残留时无任何副作用。
 
 ## 环境变量
 
