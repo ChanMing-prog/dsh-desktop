@@ -61,20 +61,20 @@ func uniqueDownloadURL(_ base: URL) -> URL {
 
 // MARK: - 清理历史残留的视觉插件（0.4.6 及更早版本的自动安装产物）
 
-/// 0.4.6 及更早版本会在每次启动时自动把视觉插件（dsh-vision / dsh-vision-router）
-/// 装进 profile 的 bundles 并安装到 node_modules；0.4.7+ 已不再安装，
-/// 但已污染的 profile 不会被自动清理，导致升级后视觉插件仍被加载。
+/// 0.4.6 及更早版本会在每次启动时自动把视觉插件装进 profile 的 `dependencies`（file: 链接
+/// 指向 DMG 内的 Resources/dsh-vision）和 `dsh.profile.bundles`，并在 node_modules 创建
+/// 对应目录。包名可能是 `@deepseek-ai/dsh-vision`、`@chanming-prog/dsh-vision` 或其它
+/// 含 "dsh-vision" 的变体；0.4.7+ 已不再安装，但已污染的 profile 不会被自动清理。
 ///
-/// 本函数在每次启动时做幂等清理：扫描 ~/.dsh/profiles 下所有 profile，
-/// 从 package.json 的 `dsh.profile.bundles` 数组移除 vision 相关包，
-/// 并删除 node_modules 里已安装的插件目录（含 pnpm 虚拟 store 的副本）。
+/// 本函数在每次启动时做幂等清理：扫描 ~/.dsh/profiles 下所有 profile 的 package.json，
+/// 用名称模式匹配（任何包含 "dsh-vision" 的依赖/bundle 名）移除相关条目，并删除
+/// node_modules 里已安装的插件目录（含 pnpm 虚拟 store 的副本）。
 /// 无残留时不做任何事，可安全地在每次启动时调用。
 @discardableResult
 func purgeLegacyVisionPlugins() -> Bool {
     let fm = FileManager.default
     let home = fm.homeDirectoryForCurrentUser.path
     let profilesDir = "\(home)/.dsh/profiles"
-    let visionPackages = ["@deepseek-ai/dsh-vision", "@deepseek-ai/dsh-vision-router"]
     guard let profiles = try? fm.contentsOfDirectory(atPath: profilesDir) else { return false }
     var changed = false
     for profile in profiles {
@@ -82,38 +82,81 @@ func purgeLegacyVisionPlugins() -> Bool {
         let pkgPath = "\(dir)/package.json"
         guard fm.fileExists(atPath: pkgPath),
               let data = try? Data(contentsOf: URL(fileURLWithPath: pkgPath)),
-              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              var dsh = json["dsh"] as? [String: Any],
-              var profileCfg = dsh["profile"] as? [String: Any],
-              var bundles = profileCfg["bundles"] as? [String] else { continue }
-        let before = bundles
-        bundles.removeAll { visionPackages.contains($0) }
-        guard bundles.count != before.count else { continue }
-        profileCfg["bundles"] = bundles
-        dsh["profile"] = profileCfg
-        json["dsh"] = dsh
-        do {
-            let out = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
-            try out.write(to: URL(fileURLWithPath: pkgPath), options: .atomic)
-            changed = true
-            NSLog("dsh-desktop: 已从 profile %@ 移除视觉插件 bundles：%@", profile, before.filter { visionPackages.contains($0) }.joined(separator: ", "))
-        } catch {
-            NSLog("dsh-desktop: 清理 profile %@ 的 bundles 失败：%@", profile, error.localizedDescription)
-        }
-        // 删除已安装的插件目录：node_modules 直链 + pnpm 虚拟 store（.pnpm）副本
-        for pkg in visionPackages {
-            let direct = "\(dir)/node_modules/\(pkg)"
-            if fm.fileExists(atPath: direct) {
-                try? fm.removeItem(atPath: direct)
-                NSLog("dsh-desktop: 已删除 %@", direct)
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+        var didModify = false
+
+        // 1. 从 dsh.profile.bundles 移除含 dsh-vision 的包
+        if var dsh = json["dsh"] as? [String: Any],
+           var profileCfg = dsh["profile"] as? [String: Any],
+           var bundles = profileCfg["bundles"] as? [String] {
+            let before = bundles
+            bundles.removeAll { $0.contains("dsh-vision") }
+            if bundles.count != before.count {
+                profileCfg["bundles"] = bundles
+                dsh["profile"] = profileCfg
+                json["dsh"] = dsh
+                didModify = true
+                NSLog("dsh-desktop: 已从 profile %@ bundles 移除：%@", profile,
+                      before.filter { $0.contains("dsh-vision") }.joined(separator: ", "))
             }
         }
-        let pnpmDir = "\(dir)/node_modules/.pnpm"
+
+        // 2. 从 dependencies 移除含 dsh-vision 的包（旧版安装器写入的 file: 链接）
+        if var deps = json["dependencies"] as? [String: Any] {
+            let visionKeys = deps.keys.filter { $0.contains("dsh-vision") }
+            if !visionKeys.isEmpty {
+                for key in visionKeys { deps.removeValue(forKey: key) }
+                if deps.isEmpty {
+                    json.removeValue(forKey: "dependencies")
+                } else {
+                    json["dependencies"] = deps
+                }
+                didModify = true
+                NSLog("dsh-desktop: 已从 profile %@ dependencies 移除：%@",
+                      profile, visionKeys.joined(separator: ", "))
+            }
+        }
+
+        if didModify {
+            do {
+                let out = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+                try out.write(to: URL(fileURLWithPath: pkgPath), options: .atomic)
+                changed = true
+            } catch {
+                NSLog("dsh-desktop: 写回 profile %@ package.json 失败：%@", profile, error.localizedDescription)
+            }
+        }
+
+        // 3. 删除 node_modules 里所有含 dsh-vision 的目录
+        //    注意：只删除 vision 包子目录本身，不删除 scope 目录（避免误删同 scope 下其他包）
+        let nmDir = "\(dir)/node_modules"
+        // pnpm 虚拟 store：.pnpm 下的哈希目录
+        let pnpmDir = "\(nmDir)/.pnpm"
         if let entries = try? fm.contentsOfDirectory(atPath: pnpmDir) {
             for entry in entries where entry.contains("dsh-vision") {
                 let path = "\(pnpmDir)/\(entry)"
                 try? fm.removeItem(atPath: path)
                 NSLog("dsh-desktop: 已删除 %@", path)
+            }
+        }
+        // node_modules 下的包：顶层条目 + @scoped 目录下的子目录
+        if let nmEntries = try? fm.contentsOfDirectory(atPath: nmDir) {
+            for entry in nmEntries where entry != ".pnpm" {
+                let path = "\(nmDir)/\(entry)"
+                if entry.contains("dsh-vision") {
+                    // 顶层条目本身含 vision（如直接安装的 dsh-vision）
+                    try? fm.removeItem(atPath: path)
+                    NSLog("dsh-desktop: 已删除 %@", path)
+                } else if entry.hasPrefix("@") {
+                    // scope 目录：只删除含 vision 的子包，不删 scope 目录本身
+                    if let scoped = try? fm.contentsOfDirectory(atPath: path) {
+                        for sub in scoped where sub.contains("dsh-vision") {
+                            let subPath = "\(path)/\(sub)"
+                            try? fm.removeItem(atPath: subPath)
+                            NSLog("dsh-desktop: 已删除 %@", subPath)
+                        }
+                    }
+                }
             }
         }
     }
