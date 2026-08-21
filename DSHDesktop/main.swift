@@ -353,7 +353,11 @@ final class DshServer {
 
     init(nodePath: String, dshEntry: String) {
         process.executableURL = URL(fileURLWithPath: nodePath)
-        process.arguments = [dshEntry, "--profile", "web", "--port", "0"]
+        // --no-open：dsh web-app 的 openBrowser 默认是 true，会弹出系统浏览器；
+        //            App 自己用 WKWebView 加载，不需要弹浏览器。
+        // --port 0：让系统分配随机端口，避免与现有服务冲突；
+        //            每次端口不同是预期行为（App 从 stdout 解析实际端口加载）。
+        process.arguments = [dshEntry, "--profile", "web", "--port", "0", "--no-open"]
         process.standardOutput = outPipe
         process.standardError = errPipe
 
