@@ -341,6 +341,27 @@ func probeDsh(port: UInt16, timeout: TimeInterval, completion: @escaping (Bool) 
     }.resume()
 }
 
+/// 端口是否可绑定：尝试 bind 一个 TCP socket。
+/// dsh 绑定固定端口被占用时会直接崩溃（EADDRINUSE），不会回退，
+/// 因此在决定是否用固定端口前必须先确认端口真的空闲。
+func isPortBindable(_ port: UInt16) -> Bool {
+    let sock = socket(AF_INET, SOCK_STREAM, 0)
+    guard sock >= 0 else { return false }
+    defer { close(sock) }
+    var on: Int32 = 1
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = port.bigEndian
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bindResult = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    return bindResult == 0
+}
+
 // MARK: - 自起 DSH 服务管理
 
 final class DshServer {
@@ -351,13 +372,13 @@ final class DshServer {
     private var onURL: ((URL) -> Void)?
     private var onFail: ((String) -> Void)?
 
-    init(nodePath: String, dshEntry: String) {
+    init(nodePath: String, dshEntry: String, port: UInt16 = 0) {
         process.executableURL = URL(fileURLWithPath: nodePath)
         // --no-open：dsh web-app 的 openBrowser 默认是 true，会弹出系统浏览器；
         //            App 自己用 WKWebView 加载，不需要弹浏览器。
-        // --port 0：让系统分配随机端口，避免与现有服务冲突；
-        //            每次端口不同是预期行为（App 从 stdout 解析实际端口加载）。
-        process.arguments = [dshEntry, "--profile", "web", "--port", "0", "--no-open"]
+        // --port <n>：优先固定端口（默认可被调用方注入），端口被占用时由
+        //             dsh 自动落到系统分配的随机端口；App 从 stdout 解析实际端口加载。
+        process.arguments = [dshEntry, "--profile", "web", "--port", String(port), "--no-open"]
         process.standardOutput = outPipe
         process.standardError = errPipe
 
@@ -875,7 +896,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSLog("dsh-desktop: spawning own server (node %@)", node)
-        let server = DshServer(nodePath: node, dshEntry: entry)
+        // 优先绑定固定端口（3080）：固定端口让每次启动的 URL 一致，
+        // 终端 dsh web / App 也能复用同一服务。先确认端口空闲再绑定——
+        // dsh 绑定被占用端口会直接崩溃（EADDRINUSE），不会回退随机端口。
+        // 端口被占时回退到 --port 0（系统分配随机端口），App 从 stdout
+        // 解析实际端口加载，行为不变。
+        let port: UInt16 = isPortBindable(DEFAULT_PROBE_PORT) ? DEFAULT_PROBE_PORT : 0
+        if port == DEFAULT_PROBE_PORT {
+            NSLog("dsh-desktop: using fixed port %d", DEFAULT_PROBE_PORT)
+        } else {
+            NSLog("dsh-desktop: port %d unavailable, falling back to random port", DEFAULT_PROBE_PORT)
+        }
+        let server = DshServer(nodePath: node, dshEntry: entry, port: port)
         self.server = server
         server.start(
             onURL: { [weak self] url in
