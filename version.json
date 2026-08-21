@@ -1,1 +1,1 @@
-{"version":"0.5.0","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.5.0/DSH-Desktop-0.5.0.dmg","sha256":"ff63b326064347f153a0f1780e3b09c2e38fa44b88ea5395984f62e31349bcc3","note":"修复：dsh 启动加 --no-open，不再自动弹出系统浏览器；优先绑定固定端口 3080（被占用时回退随机端口）"}
+{"version":"0.5.0","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.5.0/DSH-Desktop-0.5.0.dmg","sha256":"0b9f0ad67f7eff85afe3635bb3627d172e771787197281daf51ace4b9e002666","note":"修复：dsh 启动加 --no-open，不再自动弹出系统浏览器；优先绑定固定端口 3080（被占用时回退随机端口）"}
