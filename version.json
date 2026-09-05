@@ -1,1 +1,1 @@
-{"version":"0.5.0","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.5.0/DSH-Desktop-0.5.0.dmg","sha256":"0b9f0ad67f7eff85afe3635bb3627d172e771787197281daf51ace4b9e002666","note":"修复：dsh 启动加 --no-open，不再自动弹出系统浏览器；优先绑定固定端口 3080（被占用时回退随机端口）"}
+{"version":"0.5.1","dmg":"https://github.com/ChanMing-prog/dsh-desktop/releases/download/v0.5.1/DSH-Desktop-0.5.1.dmg","sha256":"35ec784fa31a7c7c861ccbfd35563d7136deaf85ff9c09ec6cdd9cadd1ed5d43","note":"修复：解析 dsh web 启动 token 完整 URL，避免加载首页时认证 401（authentication required）"}
