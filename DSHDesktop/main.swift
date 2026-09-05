@@ -407,7 +407,9 @@ final class DshServer {
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            if let range = text.range(of: #"dsh web: http://127\.0\.0\.1:\d+"#, options: .regularExpression),
+            // dsh web 新版会打印带启动 token 的完整 URL（?token=...），首次访问用它换签名 cookie。
+            // 取到行尾（非空白）整串，避免只截端口而丢掉 token 导致 401。
+            if let range = text.range(of: #"dsh web: http://\S+"#, options: .regularExpression),
                let url = URL(string: text[range].replacingOccurrences(of: "dsh web: ", with: "")) {
                 DispatchQueue.main.async {
                     guard let self = self, self.url == nil else { return }
